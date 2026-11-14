@@ -209,3 +209,85 @@ test('an empty run reports nothing rather than dividing by zero', () => {
   const { markdown } = build(empty);
   assert.ok(!markdown.includes('NaN'));
 });
+
+// --- measuring the offset rather than inferring it ---
+
+test('the offset estimator recovers the injected offset exactly', () => {
+  const truth = FIXTURE._groundTruth;
+  const r = analyse(FIXTURE.samples);
+
+  // The generator put Lasna this far behind Base Sepolia. The estimator is
+  // never told, and has to reach it from the two measurements of one leg.
+  assert.equal(r.clockOffset.medianSec, Math.abs(truth.lasnaClockOffsetSec));
+  assert.equal(r.clockOffset.direction, 'reactive chain behind origin');
+  assert.equal(r.clockOffset.n, truth.triggered);
+});
+
+test('correcting the legs by the estimate leaves a plausible latency', () => {
+  const r = analyse(FIXTURE.samples);
+  // origin -> reaction measured near zero or negative only because of the
+  // offset; adding it back must give something a reaction could actually take.
+  assert.ok(r.corrected.originToReactionSec > 0, 'corrected latency must be positive');
+  assert.ok(
+    r.corrected.originToReactionSec <= 5,
+    'and not absurdly large for a one-block reaction'
+  );
+});
+
+test('it sees the offset that the negative-median test is blind to', () => {
+  // The case the first live run actually produced. A reaction really takes
+  // 2s, and the reactive chain reads 2s behind, so the two cancel and the
+  // cross-chain leg measures a flat 0 - which is not negative, so the first
+  // test stays quiet, and 0s for a cross-chain hop is quietly impossible.
+  const samples = [];
+  for (let i = 0; i < 12; i++) {
+    const t0 = 1_700_000_000 + i * 3;
+    samples.push({
+      seq: i + 1,
+      triggered: true,
+      origin: { blockNumber: 1000 + i * 15, blockTimestamp: t0, sentAtMs: t0 * 1000 },
+      reaction: {
+        blockNumber: 500 + i,
+        blockTimestamp: t0, // 2s of latency minus a 2s offset
+        originBlock: 1000 + i * 15,
+        observedAtMs: (t0 + 2) * 1000,
+      },
+      execution: {
+        blockNumber: 1000 + i * 15 + 11,
+        blockTimestamp: t0 + 2,
+        observedAtMs: (t0 + 2) * 1000 + 300,
+      },
+    });
+  }
+
+  const r = analyse(samples);
+
+  assert.equal(r.originToReactionSec.p50, 0, 'the leg really does measure zero');
+  assert.equal(r.clockSkew.detected, false, 'so the negative-median test finds nothing');
+
+  // The estimator is not fooled, because it does not rely on the two failing
+  // to cancel.
+  assert.ok(
+    Math.abs(r.clockOffset.medianSec - 1.7) < 0.01,
+    `expected ~1.7s offset, got ${r.clockOffset.medianSec}`
+  );
+  assert.ok(
+    Math.abs(r.corrected.originToReactionSec - 1.7) < 0.01,
+    'correcting the leg should restore a real latency'
+  );
+
+  // And the report must say so out loud rather than leave both claims standing.
+  const { markdown } = build({ ...FIXTURE, samples, _groundTruth: undefined });
+  assert.match(markdown, /the negative-median test cannot see/i);
+});
+
+test('the offset estimate is omitted when nothing executed', () => {
+  const quiet = FIXTURE.samples
+    .filter((s) => s.reaction && !s.failed)
+    .map((s) => ({ ...s, triggered: false, execution: null }));
+  const r = analyse(quiet);
+  assert.equal(r.clockOffset, null, 'no executions means no second view of the leg');
+  assert.equal(r.corrected, undefined);
+  const { markdown } = build({ ...FIXTURE, samples: quiet, _groundTruth: undefined });
+  assert.ok(!markdown.includes('NaN') && !markdown.includes('undefined'));
+});

@@ -251,8 +251,71 @@ and origin gas is a rounding error. Per sample, measured over a four-sample
 run: **0.0136 lREACT**, against 0.0145 predicted from gas prices beforehand.
 Twenty callbacks cost the executor 1.5e-6 ETH in total.
 
+## Results
+
+60 samples, 30 of them crossing the floor. **No failures, no rejected
+pairings.** Full report: [`results/REPORT.md`](results/REPORT.md); raw samples
+beside it.
+
+| | |
+|---|---|
+| **end to end, median** | **2s** by block timestamp, **8 origin blocks = 1.6s** |
+| best / worst | 5 blocks (1.0s) / 18 blocks (3.6s) |
+| reaction to execution, one clock | 312ms median, 216ms best |
+
+The block count is the figure to read. Both numbers describe the same
+interval, but timestamps are whole seconds while Base Sepolia blocks are
+200ms, so the block count resolves it five times more finely.
+
+### Where the time goes
+
+| leg | as measured | offset removed |
+|---|---:|---:|
+| origin → reaction | 0s | **~1.7s** |
+| reaction → execution | 2s | **~0.3s** |
+
+Reaching the reactive chain is nearly all of it. Once the reactor has decided,
+the callback lands in about 300ms.
+
+### The clocks are 1.7s apart, and it nearly went unnoticed
+
+`origin → reaction` measured **0.00s**. Not small — *zero*, as a median over
+60 samples. A reaction arriving in the same second as the event that caused it
+is not possible at these block times, so the number is an artefact.
+
+Reactive Lasna's clock reads **1.69s behind** Base Sepolia's, and the true
+reaction latency is also about 1.7s. They cancelled almost exactly.
+
+This defeated the detector this repo shipped with. That test fires on a
+*negative* cross-chain median, on the reasoning that a reaction cannot precede
+its cause — sound, but a sufficient condition rather than a necessary one.
+Here the offset and the latency were the same size, so the leg landed on zero
+instead of going negative, and the check stayed quiet.
+
+What catches it is measuring the offset rather than inferring it:
+`reaction → execution` is recorded **twice**, once across the chain boundary
+and once from two observations by a single process. The latency is identical
+in both, so subtracting them cancels the latency and leaves the offset. The
+harness now reports that, the report says plainly when the two methods
+disagree, and [a test](harness/stats.test.mjs) reconstructs this exact
+cancellation to keep the blind spot closed.
+
+### Where the prediction was wrong
+
+Before deploying, this README predicted a **~1.5s floor** from block times
+alone. The median came in at 1.6s, which looks like a hit, but the *minimum*
+was 1.0s — below a floor, which is not something a floor permits.
+
+The reasoning was faulty. One Lasna block is 1.07s, but a transaction does not
+wait a whole block: it waits for the *next* one, which is uniform on
+0 to 1.07s. The true floor is near zero and the *expected* wait is about half
+a block. The estimate was right about the median and wrong about what kind of
+number it was, and two errors — overstating the block wait, ignoring the
+network's own processing — happened to cancel.
+
 ## Status
 
-Contracts, deploy scripts and harness are written, tested, deployed and
-verified. Any report under `results/` is either a real measurement or clearly
-marked synthetic; there are no placeholder figures anywhere in this repo.
+Contracts, deploy scripts and harness are written, tested, deployed, verified
+and measured. Any report under `results/` is either a real measurement or
+clearly marked synthetic; there are no placeholder figures anywhere in this
+repo.

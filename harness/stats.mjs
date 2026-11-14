@@ -107,9 +107,65 @@ export function derive(sample) {
     d.sameChain.endToEndSec = execution.blockTimestamp - origin.blockTimestamp;
     d.sameChain.originBlocks = execution.blockNumber - origin.blockNumber;
     d.wallMs.sentToExecutionSeen = execution.observedAtMs - origin.sentAtMs;
+
+    // The same interval as crossChain.reactionToExecutionSec, measured the
+    // other way. Both ends are observations by one process, so this one has
+    // no cross-chain offset in it. Holding the two side by side is what
+    // makes the offset itself measurable - see estimateClockOffset.
+    d.wallMs.reactionToExecutionSeen =
+      execution.observedAtMs - reaction.observedAtMs;
   }
 
   return d;
+}
+
+/**
+ * Estimate the offset between the two chains' clocks.
+ *
+ * `reaction -> execution` can be measured two ways: by subtracting block
+ * timestamps across a chain boundary, which carries the offset, and by
+ * subtracting two observations made by one process, which does not. The
+ * difference between them is the offset, with the latency cancelling out.
+ *
+ * ## Why this exists, when there is already a negative-median check
+ *
+ * That check only fires when a cross-chain leg reads negative, which proves
+ * an offset because a reaction cannot precede its cause. It is a sufficient
+ * condition, **not a necessary one** - and the first real run showed exactly
+ * how it fails. Lasna read 1.69s behind Base Sepolia while the true
+ * origin->reaction latency was also about 1.69s, so the two cancelled and
+ * the leg measured 0.00s: no negative median, no detection, and an apparent
+ * zero-latency reaction that is not physically possible.
+ *
+ * This estimator does not depend on the offset and the latency failing to
+ * cancel, so it sees what the other check cannot.
+ *
+ * It is an estimate, not a reading. Block timestamps are whole seconds, so
+ * each sample carries up to a second of quantisation, and the single-clock
+ * side is inflated by up to one poll interval at each end. Both average down
+ * over a run; neither disappears. Read it to the nearest half second.
+ */
+export function estimateClockOffset(derived) {
+  const pairs = derived.filter(
+    (d) =>
+      typeof d.crossChain.reactionToExecutionSec === 'number' &&
+      typeof d.wallMs.reactionToExecutionSeen === 'number'
+  );
+  if (pairs.length === 0) return null;
+
+  const offsets = pairs.map(
+    (d) => d.crossChain.reactionToExecutionSec - d.wallMs.reactionToExecutionSeen / 1000
+  );
+  const summary = summarize(offsets);
+
+  return {
+    n: pairs.length,
+    medianSec: summary.p50,
+    minSec: summary.min,
+    maxSec: summary.max,
+    // Positive means the reactive chain's clock reads behind the origin's.
+    direction: summary.p50 > 0 ? 'reactive chain behind origin' : 'reactive chain ahead of origin',
+  };
 }
 
 /**
@@ -161,6 +217,25 @@ export function analyse(samples) {
   };
 
   report.clockSkew = skewNote(report.originToReactionSec);
+  report.clockOffset = estimateClockOffset(derived);
+
+  // With an offset estimate in hand, the cross-chain legs can be stated the
+  // way they would read if the clocks agreed. These are corrected figures,
+  // kept apart from the measured ones rather than quietly replacing them.
+  if (report.clockOffset) {
+    const off = report.clockOffset.medianSec;
+    report.corrected = {
+      note:
+        `Cross-chain legs with the estimated ${off.toFixed(2)}s offset removed. ` +
+        `Derived, not measured: the offset is itself an estimate, so treat these ` +
+        `as accurate to about half a second.`,
+      originToReactionSec:
+        report.originToReactionSec.n > 0 ? report.originToReactionSec.p50 + off : null,
+      reactionToExecutionSec:
+        report.reactionToExecutionSec.n > 0 ? report.reactionToExecutionSec.p50 - off : null,
+    };
+  }
+
   return report;
 }
 

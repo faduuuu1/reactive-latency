@@ -135,6 +135,54 @@ function build(run) {
     L.push('');
   }
 
+  if (r.clockOffset) {
+    const o = r.clockOffset;
+    L.push('### Measuring the offset instead of inferring it');
+    L.push('');
+    L.push(
+      '`reaction -> execution` appears twice in this report: once from block ' +
+        'timestamps across a chain boundary, once from two observations by a single ' +
+        'process. The latency is the same in both. The difference between them is ' +
+        'therefore the clock offset, with the latency cancelling out.'
+    );
+    L.push('');
+    L.push('| | |');
+    L.push('|---|---|');
+    L.push(`| samples | ${o.n} |`);
+    L.push(`| **estimated offset** | **${o.medianSec.toFixed(2)}s**, ${o.direction} |`);
+    L.push(`| range across samples | ${o.minSec.toFixed(2)}s to ${o.maxSec.toFixed(2)}s |`);
+    L.push('');
+    if (r.corrected) {
+      L.push('With that removed, the legs read:');
+      L.push('');
+      L.push('| leg | as measured | offset removed |');
+      L.push('|---|---:|---:|');
+      L.push(
+        `| origin -> reaction | ${fmt(r.originToReactionSec.p50, 'sec')} | ` +
+          `**${fmt(Number(r.corrected.originToReactionSec.toFixed(2)), 'sec')}** |`
+      );
+      L.push(
+        `| reaction -> execution | ${fmt(r.reactionToExecutionSec.p50, 'sec')} | ` +
+          `**${fmt(Number(r.corrected.reactionToExecutionSec.toFixed(2)), 'sec')}** |`
+      );
+      L.push('');
+      L.push(`> ${r.corrected.note}`);
+      L.push('');
+    }
+    if (!r.clockSkew.detected && Math.abs(o.medianSec) > 0.5) {
+      L.push(
+        `**This is the case the negative-median test cannot see.** It reports no ` +
+          `offset, because no cross-chain leg came out negative — yet the offset is ` +
+          `${o.medianSec.toFixed(2)}s. The two cancelled: the true origin-to-reaction ` +
+          `latency is close to the offset, so the measured leg sits near zero and looks ` +
+          `innocuous. A reaction arriving in the same second as its cause is not ` +
+          `plausible at these block times, and that implausibility is the only hint the ` +
+          `first test leaves behind.`
+      );
+      L.push('');
+    }
+  }
+
   if (r.rejected.length) {
     L.push('## Rejected samples');
     L.push('');

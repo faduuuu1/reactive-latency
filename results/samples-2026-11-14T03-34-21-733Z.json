@@ -1,0 +1,143 @@
+{
+  "startedAt": "2026-11-14T03:34:21.733Z",
+  "options": {
+    "samples": 4,
+    "interval": 2000,
+    "poll": 250,
+    "timeout": 120000,
+    "pattern": "alternate",
+    "out": null
+  },
+  "origin": {
+    "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
+    "chainId": 84532,
+    "deployer": "0xaF3816ED6e176803Fc02664449d75853d75e3455",
+    "executor": "0x74E382Ef93473cD5e47c09a68E653EE841c7F9aE",
+    "expectedReactor": "0x16aE7374dCc682959565498Be69aEcA26549D53A",
+    "priceFeed": "0x700723a306d1873880a41bC958A802F9C2ce07F3",
+    "topic0": "85404179015524841563891003534006337484858762881302938860046037520232015481638"
+  },
+  "reactive": {
+    "chainId": 5318007,
+    "deployer": "0xaF3816ED6e176803Fc02664449d75853d75e3455",
+    "destinationChainId": 84532,
+    "executor": "0x74E382Ef93473cD5e47c09a68E653EE841c7F9aE",
+    "floor": "2000000000000000000000",
+    "originChainId": 84532,
+    "originFeed": "0x700723a306d1873880a41bC958A802F9C2ce07F3",
+    "reactor": "0x16aE7374dCc682959565498Be69aEcA26549D53A",
+    "topic0": "85404179015524841563891003534006337484858762881302938860046037520232015481638"
+  },
+  "events": {
+    "PriceUpdated": "PriceUpdated(bytes32,uint256,uint256)",
+    "Reacted": "Reacted(uint256,uint256,uint256,uint256,bool)",
+    "CallbackRequested": "CallbackRequested(uint256,uint256)",
+    "StopExecuted": "StopExecuted(uint256,bytes32,uint256,uint256)"
+  },
+  "notes": [
+    "Wall-clock figures are observation times from one poller at options.poll ms, so they are upper bounds: they include the poll gap and the RPC round trip.",
+    "Base Sepolia block timestamps are second-granular while blocks are ~200ms, so events in the same second are indistinguishable by timestamp alone.",
+    "origin->reaction and reaction->execution cross a chain boundary and so carry the two chains clock offset. Only end-to-end (origin->execution) has both timestamps from the same chain."
+  ],
+  "samples": [
+    {
+      "index": 0,
+      "seq": 1,
+      "pair": "ETH/USD",
+      "price": "2200000000000000000000",
+      "triggered": false,
+      "origin": {
+        "chainId": 84532,
+        "txHash": "0x45f08c07837ee9457af0160a861ff29f9ef38da035b94ca0034d6174fc0c5150",
+        "blockNumber": 58526992,
+        "blockTimestamp": 1794627267,
+        "sentAtMs": 1794627262855
+      },
+      "reaction": {
+        "chainId": 5318007,
+        "blockNumber": 8296561,
+        "blockTimestamp": 1794627267,
+        "originBlock": 58526992,
+        "observedAtMs": 1794627268801
+      },
+      "execution": null
+    },
+    {
+      "index": 1,
+      "seq": 2,
+      "pair": "ETH/USD",
+      "price": "1800000000000000000000",
+      "triggered": true,
+      "origin": {
+        "chainId": 84532,
+        "txHash": "0x5ca241c4b8cf60b2e243d9b9e5d469406b187091bed4aebe9ea44eb57a441ab3",
+        "blockNumber": 58527032,
+        "blockTimestamp": 1794627275,
+        "sentAtMs": 1794627271174
+      },
+      "reaction": {
+        "chainId": 5318007,
+        "blockNumber": 8296568,
+        "blockTimestamp": 1794627274,
+        "originBlock": 58527032,
+        "observedAtMs": 1794627276702
+      },
+      "execution": {
+        "chainId": 84532,
+        "blockNumber": 58527039,
+        "blockTimestamp": 1794627276,
+        "observedAtMs": 1794627277021
+      }
+    },
+    {
+      "index": 2,
+      "seq": 3,
+      "pair": "ETH/USD",
+      "price": "2200000000000000000000",
+      "triggered": false,
+      "origin": {
+        "chainId": 84532,
+        "txHash": "0x22bbddd92440dc8f8e3e5f21589ea5bb9d212f2d3899d0849e2c653d9117e958",
+        "blockNumber": 58527071,
+        "blockTimestamp": 1794627283,
+        "sentAtMs": 1794627279578
+      },
+      "reaction": {
+        "chainId": 5318007,
+        "blockNumber": 8296576,
+        "blockTimestamp": 1794627282,
+        "originBlock": 58527071,
+        "observedAtMs": 1794627283962
+      },
+      "execution": null
+    },
+    {
+      "index": 3,
+      "seq": 4,
+      "pair": "ETH/USD",
+      "price": "1800000000000000000000",
+      "triggered": true,
+      "origin": {
+        "chainId": 84532,
+        "txHash": "0x814aa3c0caaec61a26613b6e7e087d509f6a75bd6bbc8670eb7747c194c2b45e",
+        "blockNumber": 58527106,
+        "blockTimestamp": 1794627290,
+        "sentAtMs": 1794627286206
+      },
+      "reaction": {
+        "chainId": 5318007,
+        "blockNumber": 8296582,
+        "blockTimestamp": 1794627289,
+        "originBlock": 58527106,
+        "observedAtMs": 1794627290422
+      },
+      "execution": {
+        "chainId": 84532,
+        "blockNumber": 58527111,
+        "blockTimestamp": 1794627291,
+        "observedAtMs": 1794627291191
+      }
+    }
+  ],
+  "finishedAt": "2026-11-14T03:34:51.417Z"
+}

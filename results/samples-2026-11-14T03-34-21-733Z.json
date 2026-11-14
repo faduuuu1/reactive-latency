@@ -58,7 +58,8 @@
         "blockNumber": 8296561,
         "blockTimestamp": 1794627267,
         "originBlock": 58526992,
-        "observedAtMs": 1794627268801
+        "observedAtMs": 1794627268801,
+        "txHash": "0x09f838abfa60af223231d86e9f6822a54b396d02569a4f8ff865a1d77ec4aa75"
       },
       "execution": null
     },
@@ -80,13 +81,15 @@
         "blockNumber": 8296568,
         "blockTimestamp": 1794627274,
         "originBlock": 58527032,
-        "observedAtMs": 1794627276702
+        "observedAtMs": 1794627276702,
+        "txHash": "0x205337af4e8f7de250f7245b14102c40176b0d86212200f0ec67633b2dc9508c"
       },
       "execution": {
         "chainId": 84532,
         "blockNumber": 58527039,
         "blockTimestamp": 1794627276,
-        "observedAtMs": 1794627277021
+        "observedAtMs": 1794627277021,
+        "txHash": "0x952701db011f34c54047a3b5f4058fe0a8ea21bd4e2c3f81924d9944df03bfb3"
       }
     },
     {
@@ -107,7 +110,8 @@
         "blockNumber": 8296576,
         "blockTimestamp": 1794627282,
         "originBlock": 58527071,
-        "observedAtMs": 1794627283962
+        "observedAtMs": 1794627283962,
+        "txHash": "0x7398a4a180572322e57cd5a58c303ad00e32df3d528e8147acf71ca4fd2852ea"
       },
       "execution": null
     },
@@ -129,13 +133,15 @@
         "blockNumber": 8296582,
         "blockTimestamp": 1794627289,
         "originBlock": 58527106,
-        "observedAtMs": 1794627290422
+        "observedAtMs": 1794627290422,
+        "txHash": "0x982af9a5949cbbab912cafd573b945cb0941fc48d897c6822d8b3f617453c24b"
       },
       "execution": {
         "chainId": 84532,
         "blockNumber": 58527111,
         "blockTimestamp": 1794627291,
-        "observedAtMs": 1794627291191
+        "observedAtMs": 1794627291191,
+        "txHash": "0xcbc28b3488d28b07eb33804a0801d38e0b0a5154b7201ddf6f297810db4bbc79"
       }
     }
   ],

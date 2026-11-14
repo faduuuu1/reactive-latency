@@ -235,6 +235,7 @@ async function main() {
       },
       reaction: {
         chainId: lasnaChain,
+        txHash: reactionLog.transactionHash,
         blockNumber: Number(reactionLog.blockNumber),
         blockTimestamp: Number(BigInt(rw[2])), // reactedAt == block.timestamp on Lasna
         originBlock: Number(BigInt(rw[1])),
@@ -274,6 +275,7 @@ async function main() {
 
         sample.execution = {
           chainId: originChain,
+          txHash: execLog.transactionHash,
           blockNumber: execBlockNumber,
           blockTimestamp: execBlock.timestamp,
           observedAtMs: execSeenAtMs,

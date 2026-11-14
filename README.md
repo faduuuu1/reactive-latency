@@ -184,7 +184,8 @@ harness/
   stats.mjs              the arithmetic, pure and tested
   rpc.mjs                JSON-RPC in sixty lines
   events.json            event signatures, shared with the Solidity tests
-  stats.test.mjs         15 tests, no gas required
+  backfill-hashes.mjs    recovers tx hashes for a run, checking as it goes
+  stats.test.mjs         19 tests, no gas required
 NOTES.md                 what the research established, and how
 ```
 
@@ -236,6 +237,36 @@ The nonce prediction held: the reactor landed on the address computed before
 the executor existed, so the executor's immutable `_CALLBACK_SENDER` points at
 it. Both were read back off their respective chains to confirm it, rather than
 assumed from the deploy succeeding.
+
+### The loop, on chain
+
+Three complete loops from the 60-sample run — the fastest, the median and the
+slowest — each one origin event, reactive transaction, and callback:
+
+| | origin push | reactive transaction | callback |
+|---|---|---|---|
+| **1.0s** (5 blocks) | [`0x0ba20e14…`](https://sepolia.basescan.org/tx/0x0ba20e144727c535e3cb05bd24b9d62909957d9af65113ab242942307117bff8) | [`0x3ef85842…`](https://lasna.reactscan.net/tx/0x3ef858425cb27e076a08e70e1112703f747588f0cbe80fe8eaba6c4995a1d876) | [`0x8b6e794a…`](https://sepolia.basescan.org/tx/0x8b6e794ae6344c2c27ae1314d63054ccf6f6d74e67fa1284bd93a57e7b29ec66) |
+| **1.6s** (8 blocks) | [`0x5ce63482…`](https://sepolia.basescan.org/tx/0x5ce63482fe96ff9329faa303eca1298df4ef4ddf07396f4b11e55f91c56e5c0c) | [`0x0a1bb957…`](https://lasna.reactscan.net/tx/0x0a1bb957b0f3bfb740f97fa06e9431232a6f1bed62c4a4e80aaa050e764f5ae6) | [`0x9bec3bec…`](https://sepolia.basescan.org/tx/0x9bec3becf6f1f627b55590106da50da4fdba03b549934d3ad392dd2b3068128f) |
+| **3.6s** (18 blocks) | [`0xe5751b5b…`](https://sepolia.basescan.org/tx/0xe5751b5ba1c842d54a868e6add5e4d9c754778f90007c480ad0fd0b015b9629e) | [`0xb220b629…`](https://lasna.reactscan.net/tx/0xb220b62935df7d8d8ec26a6ba43f89ed0aa5e2a6d9baad50540003a4998b99e7) | [`0x4cb8af87…`](https://sepolia.basescan.org/tx/0x4cb8af8795c94de16c14984299cc39327777218895db426603a8d559dc54e86e) |
+
+Reading one across: the push calls `PriceFeed`; the reactive transaction on
+Lasna is addressed to the Omni system contract
+`0x8888888888888888888888888888888888888888`, which is what a
+`requestCallbackV_1_0` looks like from outside; the callback arrives on Base
+Sepolia from Reactive's callback sender `0xF7E8…1DDb`, addressed to the proxy
+`0x476F44b1…`, which then calls `StopLossExecutor`. The executor is not the
+`to` of that transaction and never is — it is called *by* the proxy, which is
+why its authorised sender is the proxy rather than the reactor.
+
+All three hashes for all 60 samples are in
+[`results/samples-latest.json`](results/samples-latest.json).
+
+> The first run recorded only the origin hash; the other two were recovered
+> afterwards by [`harness/backfill-hashes.mjs`](harness/backfill-hashes.mjs),
+> which refetches each log by block and sequence number and **refuses to write
+> unless the log agrees with the sample** on every field the run already
+> claimed. A hash attached to a sample it does not belong to would be worse
+> than no hash at all. The collector records all three now.
 
 ### What it actually cost
 

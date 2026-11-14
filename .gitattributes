@@ -1,0 +1,8 @@
+# Shell scripts must stay LF. Checked out with CRLF, the shebang becomes
+# "/usr/bin/env bash\r" and the script dies with "bad interpreter" - which
+# names the interpreter correctly in the error and so reads as a missing
+# bash rather than a line ending.
+*.sh text eol=lf
+
+# Fixtures are compared byte for byte by the tests.
+*.json text eol=lf

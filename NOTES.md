@@ -150,3 +150,31 @@ forge verify-contract --verifier sourcify --chain-id 5318007 $ADDR $NAME
 - https://dev.reactive.network/reactive-mainnet
 - https://dev.reactive.network/origins-and-destinations
 - https://github.com/Reactive-Network/reactive-lib-omni
+
+## Measured block times (2026-11-14, from the live chains)
+
+```
+cast block $N --field timestamp   # over a 5000-block span
+```
+
+| Chain | Block time | Source |
+|---|---|---|
+| Base Sepolia | **200 ms** | 1000s over 5000 blocks |
+| Reactive Lasna | **~1066 ms** | 5329s over 5000 blocks |
+
+This sets the floor on anything the loop can do, and it is worth stating before
+the first measurement rather than discovering it afterwards:
+
+| Stage | Bounded by | Best case |
+|---|---|---|
+| push included on Base Sepolia | one origin block | ≤ 200 ms |
+| reactor reacts on Lasna | **one Lasna block** | ~1.07 s |
+| callback included on Base Sepolia | one origin block | ≤ 200 ms |
+| **end to end** | | **~1.5 s** |
+
+So sub-second end-to-end is not achievable on this pair of chains no matter how
+the contracts are written — the reactive leg alone cannot be quicker than one
+Lasna block. A submission claiming otherwise would be measuring something else.
+
+It also settles the harness's poll interval: 250 ms is well inside Lasna's
+block time, so polling is not what limits the resolution of the reaction leg.

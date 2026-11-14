@@ -1,0 +1,6 @@
+{
+  "PriceUpdated": "PriceUpdated(bytes32,uint256,uint256)",
+  "Reacted": "Reacted(uint256,uint256,uint256,uint256,bool)",
+  "CallbackRequested": "CallbackRequested(uint256,uint256)",
+  "StopExecuted": "StopExecuted(uint256,bytes32,uint256,uint256)"
+}

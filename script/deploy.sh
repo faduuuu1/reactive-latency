@@ -74,7 +74,7 @@ plus() { A="$1" B="$2" node -e 'process.stdout.write((BigInt(process.env.A) + Bi
 
 # Deploying both contracts, funding the executor, and a margin for the pushes
 # the harness will send afterwards.
-NEED_ORIGIN="$(plus "$EXECUTOR_FUNDING_WEI" 20000000000000000)"
+NEED_ORIGIN="$(plus "$EXECUTOR_FUNDING_WEI" 500000000000000)"
 if lt "$ORIGIN_BAL" "$NEED_ORIGIN"; then
   die "origin balance $(cast to-unit "$ORIGIN_BAL" ether) ETH is below the ~$(cast to-unit "$NEED_ORIGIN" ether) ETH needed to deploy, fund the executor and run the harness"
 fi
@@ -106,6 +106,7 @@ EXECUTOR_FUNDING_WEI="$EXECUTOR_FUNDING_WEI" \
 forge script script/DeployOrigin.s.sol:DeployOrigin \
   --rpc-url "$ORIGIN_RPC_URL" \
   --broadcast \
+  --sender "$DEPLOYER" \
   "${SIGNER[@]}" \
   ${ORIGIN_FORGE_ARGS:-}
 
@@ -129,6 +130,7 @@ REACTOR_FUNDING_WEI="$REACTOR_FUNDING_WEI" \
 forge script script/DeployReactive.s.sol:DeployReactive \
   --rpc-url "$REACTIVE_RPC_URL" \
   --broadcast \
+  --sender "$DEPLOYER" \
   "${SIGNER[@]}" \
   ${REACTIVE_FORGE_ARGS:-}
 

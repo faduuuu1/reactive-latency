@@ -4,3 +4,6 @@ out/
 cache/
 broadcast/
 evidence/*.json
+
+# Harness console logs. The sample JSON next to them is the evidence.
+results/*.log

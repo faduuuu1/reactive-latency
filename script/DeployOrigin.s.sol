@@ -37,7 +37,6 @@ import { StopLossExecutor } from "../src/StopLossExecutor.sol";
 /// a reactor firing at an address with no code burns funds silently.
 contract DeployOrigin is Script {
     function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
         address payable proxy = payable(vm.envAddress("CALLBACK_PROXY"));
         address expectedReactor = vm.envAddress("EXPECTED_REACTOR");
         uint256 funding = vm.envOr("EXECUTOR_FUNDING_WEI", uint256(0.005 ether));
@@ -50,13 +49,17 @@ contract DeployOrigin is Script {
         // first callback fails to arrive.
         require(proxy.code.length > 0, "CALLBACK_PROXY has no code on this chain");
 
-        address deployer = vm.addr(pk);
+        // The signer comes from the forge CLI (--account for a keystore,
+        // --private-key for a raw key), not from the environment. Reading
+        // PRIVATE_KEY here would force the key into the environment even when
+        // a keystore is in use, which is the thing a keystore exists to avoid.
+        address deployer = msg.sender;
         console.log("deployer     ", deployer);
         console.log("chain id     ", block.chainid);
         console.log("proxy        ", proxy);
         console.log("reactor (predicted)", expectedReactor);
 
-        vm.startBroadcast(pk);
+        vm.startBroadcast();
 
         PriceFeed feed = new PriceFeed();
 

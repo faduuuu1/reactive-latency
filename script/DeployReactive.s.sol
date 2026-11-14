@@ -11,7 +11,6 @@ import { StopLossReactor } from "../src/StopLossReactor.sol";
 ///         subscribes in its constructor, so it is live the instant it exists.
 contract DeployReactive is Script {
     function run() external {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
         uint256 originChainId = vm.envUint("ORIGIN_CHAIN_ID");
         address originFeed = vm.envAddress("ORIGIN_FEED");
         uint256 destinationChainId = vm.envUint("DESTINATION_CHAIN_ID");
@@ -20,7 +19,11 @@ contract DeployReactive is Script {
         uint256 funding = vm.envOr("REACTOR_FUNDING_WEI", uint256(5 ether));
         address expectedReactor = vm.envAddress("EXPECTED_REACTOR");
 
-        address deployer = vm.addr(pk);
+        // The signer comes from the forge CLI (--account for a keystore,
+        // --private-key for a raw key), not from the environment. Reading
+        // PRIVATE_KEY here would force the key into the environment even when
+        // a keystore is in use, which is the thing a keystore exists to avoid.
+        address deployer = msg.sender;
 
         console.log("deployer    ", deployer);
         console.log("chain id    ", block.chainid);
@@ -38,7 +41,7 @@ contract DeployReactive is Script {
         require(originFeed != address(0), "ORIGIN_FEED is unset");
         require(funding > 0, "reactor must be funded: it pays for its own reactions");
 
-        vm.startBroadcast(pk);
+        vm.startBroadcast();
         StopLossReactor reactor = new StopLossReactor{ value: funding }(
             originChainId, originFeed, destinationChainId, executor, floor
         );

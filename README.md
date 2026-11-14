@@ -221,9 +221,38 @@ is exactly the thing nobody knows.
 
 ---
 
+## Deployed
+
+Live on testnet, source verified on Sourcify (`exact_match` on all three,
+including the one on Lasna):
+
+| Contract | Chain | Address |
+|---|---|---|
+| `PriceFeed` | Base Sepolia (84532) | [`0x700723a306d1873880a41bC958A802F9C2ce07F3`](https://sepolia.basescan.org/address/0x700723a306d1873880a41bC958A802F9C2ce07F3) |
+| `StopLossExecutor` | Base Sepolia (84532) | [`0x74E382Ef93473cD5e47c09a68E653EE841c7F9aE`](https://sepolia.basescan.org/address/0x74E382Ef93473cD5e47c09a68E653EE841c7F9aE) |
+| `StopLossReactor` | Reactive Lasna (5318007) | [`0x16aE7374dCc682959565498Be69aEcA26549D53A`](https://lasna.reactscan.net/address/0x16aE7374dCc682959565498Be69aEcA26549D53A) |
+
+The nonce prediction held: the reactor landed on the address computed before
+the executor existed, so the executor's immutable `_CALLBACK_SENDER` points at
+it. Both were read back off their respective chains to confirm it, rather than
+assumed from the deploy succeeding.
+
+### What it actually cost
+
+Measured, not estimated. The two chains are priced very differently and it
+decides everything about how a run is budgeted:
+
+| | Base Sepolia | Reactive Lasna |
+|---|---|---|
+| gas price | 0.006 gwei | **100 gwei** |
+
+A factor of about 16,700, so the reactive side is essentially the whole bill
+and origin gas is a rounding error. Per sample, measured over a four-sample
+run: **0.0136 lREACT**, against 0.0145 predicted from gas prices beforehand.
+Twenty callbacks cost the executor 1.5e-6 ETH in total.
+
 ## Status
 
-Contracts, deploy scripts and harness are written and tested. Nothing is
-deployed yet — that needs Base Sepolia ETH. Any report under `results/` is
-either a real measurement or clearly marked synthetic; there are no
-placeholder figures anywhere in this repo.
+Contracts, deploy scripts and harness are written, tested, deployed and
+verified. Any report under `results/` is either a real measurement or clearly
+marked synthetic; there are no placeholder figures anywhere in this repo.

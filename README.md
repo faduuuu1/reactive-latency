@@ -113,6 +113,20 @@ them would make the first look like the second.
 ## Running it
 
 ```bash
+git clone --recurse-submodules <this repo>
+```
+
+`reactive-lib-omni` is a submodule pinned at v0.1.0, so a plain `git clone`
+leaves `lib/reactive-lib-omni` empty and the build fails on the imports.
+`git submodule update --init` repairs an existing clone.
+
+> The pin matters. The library everyone finds first,
+> [`reactive-lib`](https://github.com/Reactive-Network/reactive-lib), is the
+> **Legacy** one: its `AbstractReactive` hardcodes the old system address,
+> carries a `bool internal vm`, and guards with `vmOnly`. Code written against
+> it compiles, deploys, and never reacts on Omni. See [NOTES.md](NOTES.md).
+
+```bash
 cp .env.example .env
 ```
 

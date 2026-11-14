@@ -303,9 +303,15 @@ async function main() {
   const stamp = run.startedAt.replace(/[:.]/g, '-');
   const file = opts.out ?? join('results', `samples-${stamp}.json`);
   writeFileSync(file, JSON.stringify(run, null, 2));
-  writeFileSync(join('results', 'samples-latest.json'), JSON.stringify(run, null, 2));
+  // --out means the caller is managing filenames, so the pointer to the
+  // headline run is left alone. Without this, a two-sample demo overwrites
+  // samples-latest.json and every reference to "the sixty-sample run"
+  // quietly starts resolving to the demo instead.
+  if (!opts.out) {
+    writeFileSync(join('results', 'samples-latest.json'), JSON.stringify(run, null, 2));
+  }
   console.log(`\nwrote ${file}`);
-  console.log('now: node harness/report.mjs results/samples-latest.json');
+  console.log(`now: node harness/report.mjs ${file}`);
 }
 
 main().catch((err) => {

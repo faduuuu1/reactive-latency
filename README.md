@@ -153,6 +153,16 @@ node harness/collect.mjs --samples 40
 node harness/report.mjs results/samples-latest.json
 ```
 
+Or, to watch two loops go round and get every hash printed:
+
+```bash
+./script/demo.sh
+```
+
+That writes to `results/demo-latest.json` and deliberately leaves
+`samples-latest.json` alone, so running the demo cannot overwrite the
+sixty-sample run this report is built on.
+
 ### The deploy order is not a preference
 
 The executor's authorised sender is immutable, and so is the reactor's executor
@@ -178,6 +188,7 @@ test/                    15 Solidity tests
 script/
   deploy.sh              orchestrates both chains in the one order that works
   buy-lreact.sh          testnet funding, with the 5 ETH cap enforced
+  demo.sh                two loops, live, every hash on screen
 harness/
   collect.mjs            drives the loop, writes raw samples
   report.mjs             samples -> report. No network: re-analysable later
@@ -307,6 +318,43 @@ interval, but timestamps are whole seconds while Base Sepolia blocks are
 
 Reaching the reactive chain is nearly all of it. Once the reactor has decided,
 the callback lands in about 300ms.
+
+### Why this needs Omni, and not the old network
+
+The reaction leg is dominated by one thing: waiting for the next block on the
+reactive chain. A transaction does not wait a whole block, it waits for the
+next one, so the wait is uniform on zero to one block time and averages half
+of it.
+
+That makes the comparison arithmetic rather than opinion. Legacy Reactive
+produced a block about every 7s; Omni produces one about every 1.07s, which is
+what we measured on Lasna.
+
+| | legacy, ~7s blocks | Omni, ~1.07s blocks |
+|---|---:|---:|
+| expected wait for the next block | ~3.5s | **~0.53s** |
+| worst case | ~7s | **~1.07s** |
+| the rest of the loop, as measured | ~1.1s | ~1.1s |
+| **expected end to end** | **~4.6s** | **~1.6s** |
+
+The last row is the point. 1.6s is the figure this repo measured; 4.6s is that
+same measurement with one component swapped for the old block time. And on a
+chain producing blocks every 200ms, the difference is not 3 seconds in the
+abstract — it is **23 origin blocks instead of 8**, fifteen extra blocks in
+which the price that triggered the stop can keep moving before the stop can
+act.
+
+> This is a derivation, not a measurement. We did not deploy to legacy
+> Reactive, so nothing here is a reading taken from it. What is measured is
+> everything except the block time: substituting 7s for 1.07s in a figure
+> whose components we timed separately is the most this evidence supports, and
+> it would be dishonest to present the 4.6s as though a stopwatch had produced
+> it.
+
+Instant finality compounds this, and we have not tried to quantify it. Omni's
+CometBFT consensus makes a committed block final, so the callback is issued
+from a block that cannot be reorganised. We measured no confirmation wait at
+all, which is one reason the callback leg comes in at 300ms.
 
 ### The clocks are 1.7s apart, and it nearly went unnoticed
 

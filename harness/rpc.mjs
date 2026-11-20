@@ -19,14 +19,15 @@ export class RpcError extends Error {
 export class Rpc {
   /**
    * @param {string} url
-   * @param {{label?: string, timeoutMs?: number, retries?: number}} opts
+   * @param {{label?: string, timeoutMs?: number, retries?: number, maxLogRange?: number}} opts
    */
-  constructor(url, { label = url, timeoutMs = 15_000, retries = 3 } = {}) {
+  constructor(url, { label = url, timeoutMs = 15_000, retries = 3, maxLogRange = 199 } = {}) {
     if (!url) throw new RpcError(`no RPC url for ${label}`);
     this.url = url;
     this.label = label;
     this.timeoutMs = timeoutMs;
     this.retries = retries;
+    this.maxLogRange = maxLogRange;
     this.id = 0;
   }
 
@@ -82,6 +83,16 @@ export class Rpc {
     return this.call('eth_getTransactionReceipt', [txHash]);
   }
 
+  /** Native-token balance in wei. */
+  async getBalance(address, block = 'latest') {
+    return BigInt(await this.call('eth_getBalance', [address, block]));
+  }
+
+  /** A read-only contract call. Returns the raw hex return data. */
+  async ethCall(to, data, block = 'latest') {
+    return this.call('eth_call', [{ to, data }, block]);
+  }
+
   /** @param {{address?: string, topics?: (string|null|string[])[], fromBlock: number|string, toBlock: number|string}} f */
   async getLogs(f) {
     return this.call('eth_getLogs', [
@@ -92,6 +103,32 @@ export class Rpc {
         toBlock: typeof f.toBlock === 'number' ? toHex(f.toBlock) : f.toBlock,
       },
     ]);
+  }
+
+  /**
+   * A forward-only scanner over one log filter, for providers that cap the
+   * span of a single eth_getLogs call.
+   *
+   * `fromBlock -> latest` reads as harmless and is not: the span grows for as
+   * long as the poll waits. Base Sepolia produces five blocks a second, so a
+   * 200-block ceiling is reached after forty seconds, and from then on every
+   * call fails with -32614 and the run dies rather than the wait timing out.
+   *
+   * This asks only for blocks it has not read yet, never more than
+   * `maxLogRange` at a time, so request size is constant however long the
+   * wait runs. `overlap` re-reads the newest few blocks on each pass, so a
+   * short reorg cannot drop a log into a range the cursor has stepped past.
+   */
+  logCursor(filter, fromBlock, { overlap = 2 } = {}) {
+    let next = fromBlock;
+    return async () => {
+      const latest = await this.blockNumber();
+      if (next > latest) return [];
+      const to = Math.min(latest, next + this.maxLogRange - 1);
+      const logs = await this.getLogs({ ...filter, fromBlock: next, toBlock: to });
+      next = Math.max(fromBlock, to + 1 - overlap);
+      return logs;
+    };
   }
 }
 

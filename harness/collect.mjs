@@ -19,6 +19,7 @@ import { join } from 'node:path';
 
 import { Rpc, sleep, words } from './rpc.mjs';
 import { loadEnv, need, readJson, signerArgs, topic0, topicUint } from './env.mjs';
+import { ReactorBudget, DEFAULT_COST_WEI, formatEther } from './budget.mjs';
 
 const EVENTS = readJson(new URL('./events.json', import.meta.url));
 
@@ -30,12 +31,23 @@ function parseArgs(argv) {
     timeout: 120_000, // per stage
     pattern: 'alternate', // alternate | all-trigger | none-trigger
     out: null,
+    // Per-reaction cost in ether, for the budget projection. Null means use
+    // the measured default; the guard raises it on its own if the live cost
+    // turns out higher, so this is a starting point, not a cap.
+    cost: null,
+    guard: 'on', // 'off' disables the reactor budget guard. See budget.mjs.
+    // Consecutive failed pushes before giving up. A harness that cannot send
+    // a transaction is not measuring anything, and the 20 Nov run spent four
+    // minutes and 79 pushes proving it.
+    maxPushFailures: 5,
   };
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i].replace(/^--/, '');
     const v = argv[i + 1];
     if (!(k in o)) throw new Error(`unknown flag --${k}`);
-    o[k] = ['samples', 'interval', 'poll', 'timeout'].includes(k) ? Number(v) : v;
+    o[k] = ['samples', 'interval', 'poll', 'timeout', 'maxPushFailures'].includes(k)
+      ? Number(v)
+      : v;
   }
   return o;
 }
@@ -96,6 +108,24 @@ async function main() {
     );
   }
 
+  // The reactor pays for its own reactions and cannot be revived once it has
+  // run dry, so affordability is established before the first push rather
+  // than discovered at the last one. budget.mjs explains why that asymmetry
+  // matters more than it sounds like it should.
+  const budget =
+    opts.guard === 'off'
+      ? null
+      : new ReactorBudget(lasna, reactiveCfg.reactor, {
+          costWei: opts.cost ? BigInt(Math.round(Number(opts.cost) * 1e18)) : DEFAULT_COST_WEI,
+        });
+
+  if (budget) {
+    const pre = await budget.preflight(opts.samples);
+    for (const line of pre.lines) console.log(pre.ok ? `  ${line}` : `! ${line}`);
+    if (pre.fatal) throw new Error('reactor cannot fund this run -- nothing pushed');
+    console.log('');
+  }
+
   const T = {
     priceUpdated: topic0(EVENTS.PriceUpdated),
     reacted: topic0(EVENTS.Reacted),
@@ -129,7 +159,43 @@ async function main() {
   console.log(`reactive chain ${lasnaChain}  reactor ${reactiveCfg.reactor}`);
   console.log(`floor ${floor}  samples ${opts.samples}  poll ${opts.poll}ms\n`);
 
+  if (!existsSync('results')) mkdirSync('results');
+  const stamp = run.startedAt.replace(/[:.]/g, '-');
+  const file = opts.out ?? join('results', `samples-${stamp}.json`);
+
+  // Flushed after every sample, not once past the end of the loop. An
+  // interrupted run -- a suspended reactor, a provider that starts refusing,
+  // Ctrl-C -- used to lose everything it had measured. Samples are the
+  // expensive part of this harness and the write is free.
+  // samples-latest.json is still written once, at the end, so a run that dies
+  // halfway cannot leave the headline pointer aimed at a stub.
+  const flush = () => writeFileSync(file, JSON.stringify(run, null, 2));
+
+  let stoppedEarly = null;
+  let pushFailures = 0;
+
   for (let i = 0; i < opts.samples; i++) {
+    // Checked at the top of the iteration, not the bottom. The body has five
+    // `continue` paths, and a check at the bottom would be skipped by exactly
+    // the failures that most want watching -- including the ones a dying
+    // reactor produces.
+    if (budget) {
+      const b = await budget.check(i);
+      if (b.stop) {
+        stoppedEarly = b.reason;
+        console.error(`
+! ${b.reason}`);
+        console.error(`  stopping after ${i} of ${opts.samples} samples, with the data kept`);
+        break;
+      }
+      if (i > 0 && i % 10 === 0) {
+        console.log(
+          `  -- reactor ${formatEther(b.balance)} left, spent ${formatEther(b.spent)}` +
+            (b.measuredWei ? `, ~${formatEther(b.measuredWei)}/reaction measured` : '')
+        );
+      }
+    }
+
     const shouldTrigger =
       opts.pattern === 'all-trigger'
         ? true
@@ -165,10 +231,35 @@ async function main() {
       txHash = out.match(/0x[0-9a-fA-F]{64}/)?.[0];
       if (!txHash) throw new Error(`no tx hash in cast output: ${out.trim()}`);
     } catch (err) {
-      console.error(`  ${String(i).padStart(3)} push failed - ${String(err.message).split('\n')[0]}`);
-      run.samples.push({ index: i, failed: 'push', error: String(err.message).slice(0, 400) });
+      // `cast` puts its diagnosis on stderr; `err.message` is only the command
+      // line that failed. Recording the message alone produced 79 samples in
+      // the 20 Nov run that each said a push had failed and nothing whatever
+      // about why -- the one question anyone asks afterwards. execFileSync
+      // attaches the captured streams to the error, so the reason costs
+      // nothing to keep.
+      const stderr = String(err.stderr ?? '').trim();
+      const first = (stderr || String(err.message)).split('\n')[0];
+      console.error(`  ${String(i).padStart(3)} push failed - ${first}`);
+      run.samples.push({
+        index: i,
+        failed: 'push',
+        error: String(err.message).slice(0, 200),
+        stderr: stderr.slice(0, 600) || null,
+      });
+      flush();
+
+      pushFailures += 1;
+      if (pushFailures >= opts.maxPushFailures) {
+        stoppedEarly =
+          `${pushFailures} consecutive pushes failed -- the origin chain is not ` +
+          `accepting transactions from this signer. Last reason: ${first}`;
+        console.error(`\n! ${stoppedEarly}`);
+        break;
+      }
       continue;
     }
+
+    pushFailures = 0; // the streak is consecutive failures, not a total
 
     const [receipt] = await pollUntil(
       async () => {
@@ -181,11 +272,13 @@ async function main() {
     if (!receipt) {
       console.error(`  ${String(i).padStart(3)} push ${txHash} unmined after ${opts.timeout}ms`);
       run.samples.push({ index: i, failed: 'mine', txHash });
+      flush();
       continue;
     }
     if (BigInt(receipt.status) !== 1n) {
       console.error(`  ${String(i).padStart(3)} push reverted`);
       run.samples.push({ index: i, failed: 'revert', txHash });
+      flush();
       continue;
     }
 
@@ -195,6 +288,7 @@ async function main() {
     );
     if (!feedLog) {
       run.samples.push({ index: i, failed: 'no-feed-log', txHash });
+      flush();
       continue;
     }
     // PriceUpdated(bytes32 indexed pair, uint256 price, uint256 seq)
@@ -202,19 +296,19 @@ async function main() {
 
     const originBlock = await origin.getBlock(originBlockNumber);
 
+    const scanReaction = lasna.logCursor(
+      { address: reactiveCfg.reactor, topics: [T.reacted, topicUint(seq)] },
+      lasnaFrom
+    );
     const [reactionLog, reactionSeenAtMs] = await pollUntil(async () => {
-      const logs = await lasna.getLogs({
-        address: reactiveCfg.reactor,
-        topics: [T.reacted, topicUint(seq)],
-        fromBlock: lasnaFrom,
-        toBlock: 'latest',
-      });
+      const logs = await scanReaction();
       return logs.length ? logs[0] : null;
     }, opts);
 
     if (!reactionLog) {
       console.error(`  ${String(i).padStart(3)} seq ${seq}: no reaction within ${opts.timeout}ms`);
       run.samples.push({ index: i, seq, txHash, failed: 'no-reaction', triggered: shouldTrigger });
+      flush();
       continue;
     }
 
@@ -245,13 +339,12 @@ async function main() {
     };
 
     if (sample.triggered) {
+      const scanExecution = origin.logCursor(
+        { address: originCfg.executor, topics: [T.stopExecuted, topicUint(seq)] },
+        originFrom
+      );
       const [execLog, execSeenAtMs] = await pollUntil(async () => {
-        const logs = await origin.getLogs({
-          address: originCfg.executor,
-          topics: [T.stopExecuted, topicUint(seq)],
-          fromBlock: originFrom,
-          toBlock: 'latest',
-        });
+        const logs = await scanExecution();
         return logs.length ? logs[0] : null;
       }, opts);
 
@@ -295,14 +388,20 @@ async function main() {
     );
 
     run.samples.push(sample);
+    flush();
     if (i < opts.samples - 1) await sleep(opts.interval);
   }
 
   run.finishedAt = new Date().toISOString();
-  if (!existsSync('results')) mkdirSync('results');
-  const stamp = run.startedAt.replace(/[:.]/g, '-');
-  const file = opts.out ?? join('results', `samples-${stamp}.json`);
-  writeFileSync(file, JSON.stringify(run, null, 2));
+  if (stoppedEarly) run.stoppedEarly = stoppedEarly;
+  if (budget) {
+    // Recorded in the results file, not just printed. "What state did this run
+    // leave the reactor in" is the question the first live run could not
+    // answer afterwards.
+    const { balance, debt } = await budget.read();
+    run.reactorAfter = { balanceWei: balance.toString(), debtWei: debt.toString() };
+  }
+  flush();
   // --out means the caller is managing filenames, so the pointer to the
   // headline run is left alone. Without this, a two-sample demo overwrites
   // samples-latest.json and every reference to "the sixty-sample run"

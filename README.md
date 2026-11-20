@@ -184,7 +184,7 @@ code burns funds and reports success.
 
 ```
 src/                     the three contracts
-test/                    15 Solidity tests
+test/                    19 Solidity tests
 script/
   deploy.sh              orchestrates both chains in the one order that works
   buy-lreact.sh          testnet funding, with the 5 ETH cap enforced
@@ -193,10 +193,12 @@ harness/
   collect.mjs            drives the loop, writes raw samples
   report.mjs             samples -> report. No network: re-analysable later
   stats.mjs              the arithmetic, pure and tested
+  budget.mjs             stops a run before it bankrupts the reactor
   rpc.mjs                JSON-RPC in sixty lines
   events.json            event signatures, shared with the Solidity tests
   backfill-hashes.mjs    recovers tx hashes for a run, checking as it goes
   stats.test.mjs         19 tests, no gas required
+  budget.test.mjs        11 tests, no gas required
 NOTES.md                 what the research established, and how
 ```
 
@@ -216,7 +218,7 @@ forge test
 node --test harness/stats.test.mjs
 ```
 
-Two are worth singling out.
+Three are worth singling out.
 
 [`EventSignatures.t.sol`](test/EventSignatures.t.sol) checks
 `harness/events.json` against topic0 as captured by `vm.recordLogs()` — the
@@ -230,6 +232,12 @@ stale filter.
 [synthetic data with known ground truth](harness/fixtures/make-synthetic.mjs).
 Real testnet data cannot test the skew claim, because with real data the offset
 is exactly the thing nobody knows.
+
+[`budget.test.mjs`](harness/budget.test.mjs) covers the guard that now stands
+between a run and the contract it is measuring. The cases worth having are the
+ones only reachable after a reactor has run out of funds, which is why the mock
+system contract has a settable debt: a hardcoded zero can never reach the state
+that actually cost this project a deployment.
 
 ---
 
@@ -248,6 +256,25 @@ The nonce prediction held: the reactor landed on the address computed before
 the executor existed, so the executor's immutable `_CALLBACK_SENDER` points at
 it. Both were read back off their respective chains to confirm it, rather than
 assumed from the deploy succeeding.
+
+> **The reactor is suspended as of 20 Nov 2026, and that is not a footnote.**
+> It ran out of lREACT during a run, the network recorded a 0.0136659 debt
+> against it, and the subscription stopped. It cannot be revived: only the
+> contract itself can pay its own debt, and this version has no function that
+> does. It holds 0.41 lREACT it cannot spend.
+>
+> Every transaction hash quoted anywhere in this repo is historic and still
+> verifiable on both explorers, the executor and the feed are healthy, and
+> every figure below re-derives from samples already on disk. What no longer
+> works is driving a **new** loop against this deployment.
+>
+> [`NOTES-reactor-debt.md`](NOTES-reactor-debt.md) is the transaction-level
+> account, including why redeploying is not the drop-in fix it looks like. The
+> contract fix is `coverDebt()` in
+> [`StopLossReactor`](src/StopLossReactor.sol); the harness fix is
+> [`harness/budget.mjs`](harness/budget.mjs), which refuses to start a run
+> this reactor cannot pay for — pointed at this address, the first thing it
+> does is explain why it will not push.
 
 ### The loop, on chain
 
@@ -301,13 +328,65 @@ beside it.
 
 | | |
 |---|---|
-| **end to end, median** | **2s** by block timestamp, **8 origin blocks = 1.6s** |
+| **end to end, median** | **2s** by block timestamp, **7 origin blocks = 1.4s** |
+| end to end, mean | 1.63s by block timestamp, 7.8 blocks = 1.55s |
 | best / worst | 5 blocks (1.0s) / 18 blocks (3.6s) |
 | reaction to execution, one clock | 312ms median, 216ms best |
 
 The block count is the figure to read. Both numbers describe the same
 interval, but timestamps are whole seconds while Base Sepolia blocks are
 200ms, so the block count resolves it five times more finely.
+
+> **A correction.** Earlier versions of this table gave the median as
+> "8 origin blocks = 1.6s". That was the *mean* — 7.8 blocks, 1.63s by
+> timestamp — carrying the median's label. The nearest-rank median of this run
+> is 7 blocks. The error was caught by folding in a second run, below, and
+> [`results/REPORT.md`](results/REPORT.md) had the right number all along:
+> every figure there is generated, and the generated p50 reads 7.
+>
+> It matters less than it might, for a reason worth stating rather than
+> hiding behind: across both runs together the median *is* 8 blocks = 1.6s.
+> The published figure was right about the latency and wrong about which
+> statistic it was.
+
+### Reproduced on a second run, six days later
+
+The 20 Nov run set out to reach 100 callbacks and so earn a p99. It reached 30
+before the reactor ran dry. The 30 it got are the useful part, because they
+were collected under a **different trigger pattern** — every push crossing the
+floor, rather than every other one — on a different day:
+
+| run | pattern | n | min | p50 | p90 | max | mean |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 14 Nov | alternate | 30 | 5 | 7 | 10 | 18 | 7.8 |
+| 20 Nov | all-trigger | 30 | 5 | 8 | 9 | 10 | 7.3 |
+| **combined** | — | **60** | **5** | **8** | **10** | **18** | **7.6** |
+
+Origin blocks, the finer measure. At 5 blocks/second the combined figures are
+a median of **1.6s**, p90 **2.0s**, best **1.0s**, worst **3.6s**, mean 1.51s.
+
+The two runs agree to within **one origin block — 200ms — on both median and
+p90**, and at the ±1s resolution of block timestamps they are identical: p50
+2s and p90 2s each. Independent runs days apart under different load, landing
+in the same place, is worth more than one run of twice the size: a figure
+reproduced is evidence, where a figure averaged is arithmetic.
+
+It also settles what the 18-block outlier was. It is one event in 60 and the
+second run has nothing above 10 blocks, so it is an outlier rather than a
+tail — which is the opposite of what a single run's `max` can tell you.
+
+Rebuild it from the raw samples:
+
+```bash
+node harness/report.mjs results/samples-latest.json results/samples-100.json --out results/REPORT-combined.md
+```
+
+`report.mjs` refuses to merge runs from different deployments, and refuses to
+count the same sequence number twice. Concatenation is otherwise the easiest
+way to manufacture a percentile nobody measured.
+
+**p99 is still not reported**, at n=60 against a gate of 100. Nothing in this
+repo prints one.
 
 ### Where the time goes
 
@@ -382,8 +461,9 @@ cancellation to keep the blind spot closed.
 ### Where the prediction was wrong
 
 Before deploying, this README predicted a **~1.5s floor** from block times
-alone. The median came in at 1.6s, which looks like a hit, but the *minimum*
-was 1.0s — below a floor, which is not something a floor permits.
+alone. The mean came in at 1.55s and the median at 1.4s, which looks like a
+hit, but the *minimum* was 1.0s — below a floor, which is not something a
+floor permits.
 
 The reasoning was faulty. One Lasna block is 1.07s, but a transaction does not
 wait a whole block: it waits for the *next* one, which is uniform on
@@ -398,3 +478,15 @@ Contracts, deploy scripts and harness are written, tested, deployed, verified
 and measured. Any report under `results/` is either a real measurement or
 clearly marked synthetic; there are no placeholder figures anywhere in this
 repo.
+
+Two things are open, and both are stated rather than tidied away:
+
+- **The deployed reactor is suspended** and cannot be recovered, for the
+  reasons under [Deployed](#deployed). The source now carries the fix; the
+  deployed bytecode predates it. Redeploying is not a drop-in replacement —
+  the executor's authorised sender is immutable, so a new reactor needs a new
+  executor, and `deploy.sh` additionally builds a fresh feed, which would
+  reset the sequence numbers every published hash is keyed to. That is why
+  this repo documents the outage instead of quietly swapping an address.
+- **p99 has never been measured.** 60 callbacks across two runs, against a
+  gate of 100. The attempt to reach it is what exhausted the reactor.

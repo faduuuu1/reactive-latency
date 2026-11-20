@@ -27,6 +27,88 @@ function summaryRow(label, s, unit) {
 
 const HEAD = '| metric | n | min | p50 | p90 | p99 | max | mean |\n|---|---:|---:|---:|---:|---:|---:|---:|';
 
+/**
+ * Concatenate several runs of the same deployment into one analysable run.
+ *
+ * Worth doing rather than quoting two tables side by side: percentile gates
+ * are counts, and two thirty-callback runs clear a gate that neither clears
+ * alone. Worth doing *carefully*, because concatenation is also the easiest
+ * way to manufacture a number nobody measured. Hence the two refusals below.
+ *
+ * Combining runs from different deployments would be meaningless, and
+ * combining the same run twice would halve every percentile gate for free.
+ * Both are rejected rather than warned about -- a warning in a report nobody
+ * reads line by line is not a safeguard.
+ */
+export function mergeRuns(entries) {
+  if (entries.length === 0) throw new Error('no runs to merge');
+  if (entries.length === 1) return entries[0].run;
+
+  const deployment = (r) =>
+    JSON.stringify({
+      originChainId: r.origin?.chainId,
+      priceFeed: r.origin?.priceFeed,
+      executor: r.origin?.executor,
+      reactiveChainId: r.reactive?.chainId,
+      reactor: r.reactive?.reactor,
+      floor: r.reactive?.floor,
+    });
+
+  const first = deployment(entries[0].run);
+  for (const e of entries.slice(1)) {
+    if (deployment(e.run) !== first) {
+      throw new Error(
+        `${e.file} measures a different deployment from ${entries[0].file}; ` +
+          'latencies from different contracts are not samples of one population'
+      );
+    }
+  }
+
+  // Same run passed twice, or overlapping files. The feed's sequence number is
+  // monotonic per deployment, so a repeated seq can only mean a repeated
+  // sample.
+  const seen = new Map();
+  for (const e of entries) {
+    for (const x of e.run.samples) {
+      if (x.seq === undefined) continue;
+      if (seen.has(x.seq)) {
+        throw new Error(
+          `seq ${x.seq} appears in both ${seen.get(x.seq)} and ${e.file}; ` +
+            'the same sample cannot be counted twice'
+        );
+      }
+      seen.set(x.seq, e.file);
+    }
+  }
+
+  const polls = [...new Set(entries.map((e) => e.run.options?.poll))];
+  const started = entries.map((e) => e.run.startedAt).filter(Boolean).sort();
+  const finished = entries.map((e) => e.run.finishedAt).filter(Boolean).sort();
+
+  return {
+    ...entries[0].run,
+    startedAt: started[0],
+    finishedAt: finished[finished.length - 1],
+    samples: entries.flatMap((e) => e.run.samples),
+    // Provenance travels with the merged run, so the report can show which
+    // files produced it instead of asserting a total.
+    sources: entries.map((e) => {
+      const a = analyse(e.run.samples);
+      return {
+        file: e.file,
+        startedAt: e.run.startedAt,
+        pattern: e.run.options?.pattern ?? '?',
+        poll: e.run.options?.poll,
+        pushes: a.counts.collected,
+        callbacks: a.counts.executed,
+      };
+    }),
+    // Only meaningful if every run observed at the same resolution. Recorded
+    // either way; the report says so when they differ.
+    mixedPollIntervals: polls.length > 1 ? polls : null,
+  };
+}
+
 function build(run) {
   const r = analyse(run.samples);
   const L = [];
@@ -45,8 +127,40 @@ function build(run) {
 
   L.push('# Cross-chain stop-loss: latency report');
   L.push('');
-  L.push(`Run started \`${run.startedAt}\`, finished \`${run.finishedAt ?? 'incomplete'}\`.`);
-  L.push('');
+  if (run.sources) {
+    L.push(
+      `**${run.sources.length} independent runs of the same deployment, combined.** ` +
+        `Earliest started \`${run.startedAt}\`, latest finished \`${run.finishedAt ?? 'incomplete'}\`.`
+    );
+    L.push('');
+    L.push('| source | started | pattern | pushes | callbacks |');
+    L.push('|---|---|---|---:|---:|');
+    for (const x of run.sources) {
+      L.push(
+        `| \`${x.file}\` | ${x.startedAt} | ${x.pattern} | ${x.pushes} | ${x.callbacks} |`
+      );
+    }
+    L.push('');
+    L.push(
+      'Separate runs, days apart, under different trigger patterns. That makes the ' +
+        'agreement between them evidence rather than arithmetic: a median reproduced ' +
+        'on a second run is a stronger claim than the same median from one run twice ' +
+        'the size.'
+    );
+    L.push('');
+    if (run.mixedPollIntervals) {
+      L.push(
+        `> These runs observed at different poll intervals (${run.mixedPollIntervals.join('ms, ')}ms). ` +
+          'The end-to-end figure is built from block timestamps and is unaffected, but ' +
+          'every wall-clock row below mixes two resolutions and should be read as the ' +
+          'coarser of them.'
+      );
+      L.push('');
+    }
+  } else {
+    L.push(`Run started \`${run.startedAt}\`, finished \`${run.finishedAt ?? 'incomplete'}\`.`);
+    L.push('');
+  }
   L.push('| | |');
   L.push('|---|---|');
   L.push(`| origin chain | \`${run.origin?.chainId}\` |`);
@@ -62,6 +176,14 @@ function build(run) {
       `${r.counts.triggered} crossed the floor · ${r.counts.executed} callbacks landed.**`
   );
   L.push('');
+
+  if (run.stoppedEarly) {
+    L.push(
+      `> **This run stopped early:** ${run.stoppedEarly} The samples above are every ` +
+        'one it completed, not a truncated view of more.'
+    );
+    L.push('');
+  }
 
   if (Object.keys(stages).length) {
     L.push('Collection failures by stage: ' +
@@ -228,12 +350,17 @@ function build(run) {
 
 function main() {
   const args = process.argv.slice(2);
-  const input = args.find((a) => !a.startsWith('--')) ?? 'results/samples-latest.json';
   const outIdx = args.indexOf('--out');
   const out = outIdx >= 0 ? args[outIdx + 1] : 'results/REPORT.md';
 
-  const run = JSON.parse(readFileSync(input, 'utf8'));
-  const { markdown } = build(run);
+  // `--out X` puts a bare path in argv that is not an input. The old filter
+  // took the first non-flag argument, so `report.mjs --out r.md` quietly
+  // analysed r.md.
+  const inputs = args.filter((a, i) => !a.startsWith('--') && i !== outIdx + 1);
+  if (inputs.length === 0) inputs.push('results/samples-latest.json');
+
+  const entries = inputs.map((file) => ({ file, run: JSON.parse(readFileSync(file, 'utf8')) }));
+  const { markdown } = build(mergeRuns(entries));
 
   writeFileSync(out, markdown + '\n');
   console.log(markdown);

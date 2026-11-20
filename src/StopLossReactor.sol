@@ -17,7 +17,18 @@ import { AbstractReactive } from "@reactive/src/base/AbstractReactive.sol";
 ///
 /// The contract pays for its own reactive transactions, so it must hold a
 /// balance before the first event arrives. The constructor is payable for that
-/// reason; `receive()` is inherited if it needs topping up later.
+/// reason.
+///
+/// Topping it up later is necessary but not sufficient, and the difference is
+/// the sharpest thing this build learned. If the balance reaches zero while
+/// events are still arriving, the network records the shortfall as a debt
+/// against this address and suspends the subscription. Sending more funds does
+/// not clear it: the system contract credits `msg.sender`, so paying from an
+/// EOA credits the EOA, and `AbstractPayer._coverDebt()` is `internal`. Only
+/// this contract can pay what this contract owes, so a reactor with no way to
+/// call it is finished at any balance -- which is exactly what happened to the
+/// first deployment, recorded in NOTES-reactor-debt.md. Hence `coverDebt()`
+/// below.
 contract StopLossReactor is AbstractReactive {
     /// @notice Reaction recorded on the reactive network.
     /// @dev `reactedAt` is t1 of the measurement. `originBlock` comes from the
@@ -33,6 +44,10 @@ contract StopLossReactor is AbstractReactive {
 
     /// @notice Emitted when a callback has been requested, before it is delivered.
     event CallbackRequested(uint256 indexed seq, uint256 price);
+
+    /// @notice Emitted when this contract has paid off its debt to the network.
+    /// @param amount Debt cleared, in the reactive network native token.
+    event DebtCovered(uint256 amount);
 
     /// @notice Origin chain being watched.
     uint256 public immutable ORIGIN_CHAIN_ID;
@@ -140,5 +155,44 @@ contract StopLossReactor is AbstractReactive {
                 payload: payload
             })
         );
+    }
+
+    /// @notice The outstanding debt this contract owes the reactive network.
+    /// @dev Zero in normal operation. Any other value means reactive
+    ///      transactions have gone unpaid and the subscription is suspended,
+    ///      so no further events arrive until `coverDebt()` clears it.
+    ///      Exposed because the off-chain harness has to be able to see this
+    ///      coming: a view is the difference between stopping a run early and
+    ///      finding out afterwards that the deployment is gone.
+    function debt() external view returns (uint256) {
+        return _SERVICE_PROVIDER.debt(address(this));
+    }
+
+    /// @notice Pay off the outstanding debt and resume the subscription.
+    /// @dev Permissionless on purpose, and worth saying why, because an access
+    ///      check looks like the safer default here.
+    ///
+    ///      The amount is read from the service provider rather than supplied
+    ///      by the caller, and the recipient is the immutable
+    ///      `_SERVICE_PROVIDER`. So all a caller can do is move this
+    ///      contract funds to the one address they were always destined for,
+    ///      in the exact amount already owed. No choice is left to abuse.
+    ///
+    ///      An owner-gated version would be strictly worse: it adds a key that
+    ///      can be lost, and losing it reintroduces the very failure this
+    ///      function exists to undo.
+    ///
+    ///      Reverts with `InsufficientFunds` if the balance cannot cover the
+    ///      debt. That is the honest outcome -- a partial payment does not
+    ///      resume the subscription, so there is nothing to gain by taking one.
+    function coverDebt() external {
+        // Emitted before the transfer, not after. `_coverDebt()` calls out to
+        // the service provider, and a log written after an external call can
+        // be reordered relative to whatever that call emits. A revert in the
+        // transfer rolls this event back with it, so emitting first costs
+        // nothing in correctness and keeps the ordering unambiguous.
+        uint256 amount = _SERVICE_PROVIDER.debt(address(this));
+        emit DebtCovered(amount);
+        _coverDebt();
     }
 }

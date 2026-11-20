@@ -49,11 +49,26 @@ contract MockSystem {
         return requests[requests.length - 1].payload;
     }
 
-    function debt(address) external pure returns (uint256) {
-        return 0;
+    /// @notice Debt the mock reports, and what it has actually been paid.
+    /// @dev Settable because the interesting states are the ones the real
+    ///      network only reaches after a contract has run out of funds, and a
+    ///      hardcoded zero can never reach them. `received` is asserted on
+    ///      rather than inferred from balances, so a test cannot pass on a
+    ///      transfer that went somewhere else.
+    uint256 public debtOwed;
+    uint256 public received;
+
+    function setDebt(uint256 amount_) external {
+        debtOwed = amount_;
     }
 
-    receive() external payable {}
+    function debt(address) external view returns (uint256) {
+        return debtOwed;
+    }
+
+    receive() external payable {
+        received += msg.value;
+    }
 }
 
 contract StopLossTest is Test {
@@ -237,4 +252,58 @@ contract StopLossTest is Test {
             out[i] = data_[i + 4];
         }
     }
+
+    // --- debt recovery ---
+    //
+    // These four exist because the first live deployment died for want of the
+    // function they cover. It ran out of lREACT mid-run, the network recorded
+    // a debt against it and suspended the subscription, and nothing could
+    // clear it: the system contract credits `msg.sender`, so paying from an
+    // EOA credited the EOA, and `_coverDebt()` is `internal`, so only the
+    // reactor could have paid -- through a function it did not have. It was
+    // left holding 0.41 lREACT it could not spend against 0.0137 it owed.
+    // NOTES-reactor-debt.md has the transaction-level account.
+
+    function test_debt_reportsWhatTheNetworkSays() public {
+        assertEq(reactor.debt(), 0, "nothing owed on a fresh reactor");
+        system.setDebt(5 ether);
+        assertEq(reactor.debt(), 5 ether, "the view must track the network");
+    }
+
+    function test_coverDebt_paysTheExactAmountOwed() public {
+        vm.deal(address(reactor), 1 ether);
+        system.setDebt(0.25 ether);
+
+        reactor.coverDebt();
+
+        assertEq(system.received(), 0.25 ether, "the system contract is paid the debt");
+        assertEq(address(reactor).balance, 0.75 ether, "and not a wei more");
+    }
+
+    /// @dev The whole point is that recovery must not depend on a key. An
+    ///      owner-gated version would reintroduce the failure it exists to
+    ///      undo, so "anyone can call it" is the property under test rather
+    ///      than an oversight.
+    function test_coverDebt_isCallableByAnyone() public {
+        vm.deal(address(reactor), 1 ether);
+        system.setDebt(0.1 ether);
+
+        vm.prank(makeAddr("a passer-by"));
+        reactor.coverDebt();
+
+        assertEq(system.received(), 0.1 ether, "a stranger can clear the debt");
+    }
+
+    /// @dev A partial payment does not resume the subscription, so there is
+    ///      nothing to be gained by accepting one. Reverting says so.
+    function test_coverDebt_revertsWhenTheBalanceCannotCoverIt() public {
+        vm.deal(address(reactor), 0.05 ether);
+        system.setDebt(0.2 ether);
+
+        vm.expectRevert();
+        reactor.coverDebt();
+
+        assertEq(system.received(), 0, "no partial payment");
+    }
+
 }
